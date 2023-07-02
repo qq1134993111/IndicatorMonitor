@@ -244,25 +244,25 @@ public:
 
 	}
 
-	GeneralProcessor(std::string name, size_t thread_number = 1)
+	GeneralProcessor(std::string name, size_t thread_number = 1, bool binding_core = false, int32_t binding_core_start_index = 0)
 		: GeneralProcessor()
 	{
-		Start(name, thread_number);
+		Start(std::move(name), thread_number, binding_core, binding_core_start_index);
 	}
 
 	~GeneralProcessor() { Stop(); }
 
-	bool Start(std::string name = "GeneralProcessor", size_t thread_number = 1, bool binding_core = true)
+	bool Start(std::string name = "GeneralProcessor", size_t thread_number = 1, bool binding_core = false, int32_t binding_core_start_index = 0)
 	{
-		name_ = name_;
+		name_ = std::move(name);
 		binding_core_ = binding_core;
-
+		binding_core_start_index_ = binding_core_start_index;
 		bool start = false;
 		if (is_start_.compare_exchange_strong(start, true))
 		{
 			for (index_ = 0; index_ < thread_number; index_++)
 			{
-				auto p_io_thread = CreateIoThread(name + std::to_string(index_));
+				auto p_io_thread = CreateIoThread(name_ + std::to_string(index_));
 				v_io_queue_.push_back(std::move(p_io_thread));
 			}
 
@@ -279,7 +279,7 @@ public:
 
 				if (binding_core_)
 				{
-					p_io_thread->SetAffinity(i);
+					p_io_thread->SetAffinity(binding_core_start_index_ + i);
 				}
 #ifndef _WIN32				
 				p_io_thread->SetSchedParam(SCHED_FIFO, 99);
@@ -336,7 +336,7 @@ public:
 		int count = 0;
 		for (int i = 0; i < number; i++)
 		{
-			index_++;
+
 			auto p_io_thread = CreateIoThread(name_ + std::to_string(index_));
 			if (!p_io_thread->Start())
 			{
@@ -344,7 +344,7 @@ public:
 			}
 			if (binding_core_)
 			{
-				p_io_thread->SetAffinity(i);
+				p_io_thread->SetAffinity(binding_core_start_index_ + index_);
 			}
 #ifndef _WIN32				
 			p_io_thread->SetSchedParam(SCHED_FIFO, 99);
@@ -353,6 +353,7 @@ public:
 #endif
 
 			v_io_queue_.push_back(std::move(p_io_thread));
+			index_++;
 
 			count++;
 		}
@@ -372,9 +373,9 @@ public:
 		{
 			if (!v_io_queue_.empty())
 			{
-				v_io_queue_.front().reset();
-				v_io_queue_.pop_front();
-
+				v_io_queue_.back().reset();
+				v_io_queue_.pop_back();
+				index_--;
 				count++;
 			}
 		}
@@ -545,5 +546,6 @@ private:
 	std::string name_;
 	bool  binding_core_ = false;
 	std::size_t index_ = 0;
+	std::size_t binding_core_start_index_ = 0;
 
 };
