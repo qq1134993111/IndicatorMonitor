@@ -247,7 +247,10 @@ public:
 	GeneralProcessor(std::string name, size_t thread_number = 1, bool binding_core = false, int32_t binding_core_start_index = 0)
 		: GeneralProcessor()
 	{
-		Start(std::move(name), thread_number, binding_core, binding_core_start_index);
+		if (!Start(std::move(name), thread_number, binding_core, binding_core_start_index))
+		{
+			throw std::runtime_error("GeneralProcessor Construct failed, Start failed");
+		}
 	}
 
 	~GeneralProcessor() { Stop(); }
