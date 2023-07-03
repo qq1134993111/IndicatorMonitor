@@ -310,9 +310,9 @@ public:
 	{
 		std::unique_lock<std::mutex> lc(mtx_);
 
-		int size = class_node_map_.size();
+		std::size_t size = class_node_map_.size();
 
-		return size;
+		return size!=0;
 	}
 protected:
 	void DoOnCollectionIndictor(const std::string& class_name)

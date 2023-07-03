@@ -41,7 +41,7 @@ public:
 		}
 		catch (const std::system_error& e)
 		{
-			printf("create thread failed:%d,%s\n", e.code(), e.what());
+			printf("create thread failed:%d,%s\n", e.code().value(), e.what());
 
 			return false;
 		}
@@ -58,7 +58,9 @@ public:
 		if (is_stop_)
 		{
 			if (thread_.joinable())
+			{
 				thread_.join();
+			}
 
 			is_start_ = false;
 
@@ -69,9 +71,12 @@ public:
 
 		if (wait)
 		{
-			if (thread_.joinable()) {
+			if (thread_.joinable())
+			{
 				thread_.join();
 			}
+
+			is_start_ = false;
 		}
 
 	}
@@ -155,7 +160,7 @@ public:
 
 	}
 	//设置线程亲和性，仅针对linux系统
-	void SetAffinity(int index)
+	void SetAffinity(std::size_t index)
 	{
 #ifdef __linux__
 
@@ -172,17 +177,17 @@ public:
 #else
 		DWORD_PTR old_mask, new_mask;
 		// 将每个线程绑定到一个CPU核上
-		new_mask = 1 << (index % std::thread::hardware_concurrency());
+		new_mask = static_cast<DWORD_PTR>(1) << (index % std::thread::hardware_concurrency());
 		auto handle = thread_.native_handle();
 		old_mask = SetThreadAffinityMask(handle, new_mask);
 		if (old_mask == 0)
 		{
 			// 函数失败，打印错误信息
-			printf("SetThreadAffinityMask failed for thread %d, error code:%d\n", index, GetLastError());
+			printf("SetThreadAffinityMask failed for thread %lld, error code:%d\n", index, GetLastError());
 		}
 		else {
 			// 函数成功，打印旧的亲和性掩码
-			printf("SetThreadAffinityMask succeeded for thread %d, old mask::%d\n", index, old_mask);
+			printf("SetThreadAffinityMask succeeded for thread %lld, old mask::%lld\n", index, old_mask);
 
 		}
 
@@ -194,11 +199,11 @@ public:
 		const auto handle = thread_.native_handle();
 #ifdef _WIN32
 		// 获取ANSI字符串的长度
-		int len = name.size();
+		std::size_t len = name.size();
 		// 分配足够的空间来存储Unicode字符串
 		std::wstring wstr(len, L'\0');
 		// 转换ANSI字符串到Unicode字符串
-		MultiByteToWideChar(CP_ACP, 0, name.c_str(), len, &wstr[0], len);
+		MultiByteToWideChar(CP_ACP, 0, name.c_str(), (int)len, &wstr[0], (int)len);
 		// 调用SetThreadDescription函数
 		HRESULT hr = SetThreadDescription(handle, wstr.c_str());
 		if (SUCCEEDED(hr)) {
@@ -271,7 +276,7 @@ public:
 
 			bool start_all = true;
 
-			for (int32_t i = 0; i < v_io_queue_.size(); i++)
+			for (std::size_t i = 0; i < v_io_queue_.size(); i++)
 			{
 				auto& p_io_thread = v_io_queue_[i];
 				if (!p_io_thread->Start())
@@ -337,7 +342,7 @@ public:
 
 		std::unique_lock<std::mutex> lc(io_queue_mtx_);
 		int count = 0;
-		for (int i = 0; i < number; i++)
+		for (std::size_t i = 0; i < number; i++)
 		{
 
 			auto p_io_thread = CreateIoThread(name_ + std::to_string(index_));
@@ -441,7 +446,7 @@ public:
 			p_strand = &strand_;
 		}
 
-		return SetTimer(*p_strand, duration, std::move(function), nullptr);
+		return SetTimer(*p_strand, duration, std::forward<Function>(function), nullptr);
 	}
 
 	template<class Rep, class Period, class F, class... Args>
@@ -451,7 +456,7 @@ public:
 		return AddTimer(duration, std::move(func), p_strand);
 	}
 
-	std::size_t CancelTimer(boost::asio::io_service::strand* p_strand, const std::weak_ptr<boost::asio::steady_timer>& weak_timer, bool wait = true)
+	std::size_t CancelTimer(boost::asio::io_service::strand* p_strand, const std::weak_ptr<boost::asio::steady_timer>& weak_timer, int32_t wait_seconds = 0)
 	{
 		auto timer = weak_timer.lock();
 		if (timer)
@@ -463,15 +468,31 @@ public:
 				return cancel_count;
 			};
 
-			if (wait)
-			{
-				auto f = Commit(p_strand, std::move(func));
-				return f.get();
-			}
-			else
+			if (wait_seconds == 0)
 			{
 				Post(p_strand, std::move(func));
 				return 1;
+			}
+			else if (wait_seconds > 0)
+			{
+				auto f = Commit(p_strand, std::move(func));
+				std::future_status status;
+				status = f.wait_for(std::chrono::seconds(wait_seconds));
+				if (status == std::future_status::ready)
+				{
+					return f.get();
+				}
+				else if (status == std::future_status::timeout)
+				{
+					return 1;
+				}
+
+				return 1;
+			}
+			else
+			{
+				auto f = Commit(p_strand, std::move(func));
+				return f.get();
 			}
 
 		}
@@ -548,7 +569,7 @@ private:
 	std::atomic<bool> is_stop_{true};
 	std::string name_;
 	bool  binding_core_ = false;
-	std::size_t index_ = 0;
 	std::size_t binding_core_start_index_ = 0;
+	std::size_t index_ = 0;
 
 };
