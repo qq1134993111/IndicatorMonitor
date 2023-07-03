@@ -15,6 +15,11 @@
 
 class IoServiceThread
 {
+private:
+	IoServiceThread(const IoServiceThread&) = delete;
+	IoServiceThread& operator =(const IoServiceThread&) = delete;
+	IoServiceThread(IoServiceThread&&) = delete;
+	IoServiceThread& operator =(IoServiceThread&&) = delete;
 public:
 	IoServiceThread(boost::asio::io_service& ios, const std::string& thread_name = "IoServiceThread")
 		: ios_(ios)
@@ -37,7 +42,7 @@ public:
 
 		try
 		{
-			thread_ = std::thread([this]() {Run(this->thread_name_); });
+			thread_ = std::thread([this]() {OnRun(this->thread_name_); });
 		}
 		catch (const std::system_error& e)
 		{
@@ -81,37 +86,6 @@ public:
 
 	}
 
-protected:
-	void Run(std::string& thread_name)
-	{
-		{
-			std::lock_guard<std::mutex> lk(mtx_);
-			is_start_ = true;
-			is_stop_ = false;
-			SetThreadName(thread_name_);
-		}
-		cv_.notify_one();
-
-		boost::system::error_code ec;
-
-		while (!is_stop_) {
-			try
-			{
-				ios_.run_one(ec);
-			}
-			catch (const std::exception& e)
-			{
-				printf("ios_.run_one exception %s\n", e.what());
-			}
-			catch (...)
-			{
-				printf("ios_.run_one exception\n");
-			}
-
-		}
-
-	}
-
 public:
 	//设置线程优先级
 	void SetSchedParam(int policy, int priority)
@@ -144,7 +118,7 @@ public:
 		auto handle = thread_.native_handle();
 		//policy 为1开启，为0关闭
 		// 设置线程的优先级提升状态
-		if (!SetThreadPriorityBoost(handle, policy))
+		if (!SetThreadPriorityBoost(handle, (BOOL)policy))
 		{
 			printf("SetThreadPriorityBoost failed, error code: %d\n", GetLastError());
 		}
@@ -155,11 +129,10 @@ public:
 			printf("SetThreadPriority failed, error code: %d\n", GetLastError());
 		}
 
-
 #endif
 
 	}
-	//设置线程亲和性，仅针对linux系统
+	//设置线程亲和性
 	void SetAffinity(std::size_t index)
 	{
 #ifdef __linux__
@@ -193,6 +166,7 @@ public:
 
 #endif
 	}
+protected:
 	//设置线程名称
 	void SetThreadName(const std::string& name)
 	{
@@ -227,6 +201,36 @@ public:
 		}
 #endif
 	}
+
+	void OnRun(std::string& thread_name)
+	{
+		{
+			std::lock_guard<std::mutex> lk(mtx_);
+			is_start_ = true;
+			is_stop_ = false;
+			SetThreadName(thread_name_);
+		}
+		cv_.notify_one();
+
+		boost::system::error_code ec;
+
+		while (!is_stop_) {
+			try
+			{
+				ios_.run_one(ec);
+			}
+			catch (const std::exception& e)
+			{
+				printf("boost::asio::io_service run_one exception %s\n", e.what());
+			}
+			catch (...)
+			{
+				printf("boost::asio::io_service run_one exception\n");
+			}
+
+		}
+
+	}
 private:
 	boost::asio::io_service& ios_;
 	std::string thread_name_;
@@ -240,6 +244,11 @@ private:
 
 class GeneralProcessor
 {
+private:
+	GeneralProcessor(const GeneralProcessor&) = delete;
+	GeneralProcessor& operator =(const GeneralProcessor&) = delete;
+	GeneralProcessor(GeneralProcessor&&) = delete;
+	GeneralProcessor& operator =(GeneralProcessor&&) = delete;
 public:
 	GeneralProcessor()
 		: ios_()
@@ -262,12 +271,14 @@ public:
 
 	bool Start(std::string name = "GeneralProcessor", size_t thread_number = 1, bool binding_core = false, int32_t binding_core_start_index = 0)
 	{
-		name_ = std::move(name);
-		binding_core_ = binding_core;
-		binding_core_start_index_ = binding_core_start_index;
+
 		bool start = false;
 		if (is_start_.compare_exchange_strong(start, true))
 		{
+			name_ = std::move(name);
+			binding_core_ = binding_core;
+			binding_core_start_index_ = binding_core_start_index;
+
 			for (index_ = 0; index_ < thread_number; index_++)
 			{
 				auto p_io_thread = CreateIoThread(name_ + std::to_string(index_));
