@@ -449,8 +449,32 @@ public:
 		return result;
 	}
 
+
+	class TimerObject :public boost::asio::steady_timer
+	{
+		friend class GeneralProcessor;
+	public:
+		using boost::asio::steady_timer::steady_timer;
+
+		std::size_t Stop()
+		{
+			stop_ = true;
+
+			boost::system::error_code ec;
+			auto cancel_count = cancel(ec);
+			return cancel_count;
+		}
+
+		bool IsStopped()
+		{
+			return stop_;
+		}
+	private:
+		bool stop_ = true;
+	};
+
 	template<class Rep, class Period, typename Function>
-	std::weak_ptr<boost::asio::steady_timer> AddTimer(std::chrono::duration<Rep, Period>  duration, Function&& function, boost::asio::io_service::strand* p_strand = nullptr)
+	std::weak_ptr<TimerObject> AddTimer(boost::asio::io_service::strand* p_strand, std::chrono::duration<Rep, Period>  duration, Function&& function)
 	{
 		if (p_strand == nullptr)
 		{
@@ -460,52 +484,20 @@ public:
 		return SetTimer(*p_strand, duration, std::forward<Function>(function), nullptr);
 	}
 
+
 	template<class Rep, class Period, class F, class... Args>
-	std::weak_ptr<boost::asio::steady_timer> AddTimer(boost::asio::io_service::strand* p_strand, std::chrono::duration<Rep, Period> duration, F&& f, Args&&... args)
+	std::weak_ptr<TimerObject> AddTimer(boost::asio::io_service::strand* p_strand, std::chrono::duration<Rep, Period> duration, F&& f, Args&&... args)
 	{
 		auto func = std::bind(std::forward<F>(f), std::forward<Args>(args)...);
 		return AddTimer(duration, std::move(func), p_strand);
 	}
 
-	std::size_t CancelTimer(boost::asio::io_service::strand* p_strand, const std::weak_ptr<boost::asio::steady_timer>& weak_timer, int32_t wait_seconds = 0)
+	std::size_t CancelTimer(const std::weak_ptr<TimerObject>& weak_timer)
 	{
-		auto timer = weak_timer.lock();
-		if (timer)
+		auto sp = weak_timer.lock();
+		if (sp)
 		{
-			auto func = [timer]()->size_t
-			{
-				boost::system::error_code ec;
-				auto cancel_count = timer->cancel(ec);
-				return cancel_count;
-			};
-
-			if (wait_seconds == 0)
-			{
-				Post(p_strand, std::move(func));
-				return 1;
-			}
-			else if (wait_seconds > 0)
-			{
-				auto f = Commit(p_strand, std::move(func));
-				std::future_status status;
-				status = f.wait_for(std::chrono::seconds(wait_seconds));
-				if (status == std::future_status::ready)
-				{
-					return f.get();
-				}
-				else if (status == std::future_status::timeout)
-				{
-					return 1;
-				}
-
-				return 1;
-			}
-			else
-			{
-				auto f = Commit(p_strand, std::move(func));
-				return f.get();
-			}
-
+			return sp->Stop();
 		}
 
 		return 0;
@@ -533,7 +525,19 @@ public:
 		return result;
 	}
 
+	template<class Rep, class Period, typename Function>
+	std::weak_ptr<TimerObject> AddTimer(std::chrono::duration<Rep, Period>  duration, Function&& function)
+	{
+		return SetTimer(duration, std::forward<Function>(function), nullptr);
+	}
 
+
+	template<class Rep, class Period, class F, class... Args>
+	std::weak_ptr<TimerObject> AddTimer(std::chrono::duration<Rep, Period> duration, F&& f, Args&&... args)
+	{
+		auto func = std::bind(std::forward<F>(f), std::forward<Args>(args)...);
+		return AddTimer(duration, std::move(func));
+	}
 
 protected:
 	std::unique_ptr<IoServiceThread> CreateIoThread(std::string thread_name)
@@ -543,11 +547,41 @@ protected:
 	}
 
 	template<class Rep, class Period, typename Function>
-	std::weak_ptr<boost::asio::steady_timer> SetTimer(boost::asio::io_service::strand& my_strand, std::chrono::duration<Rep, Period>  duration, Function&& function, std::shared_ptr<boost::asio::steady_timer> timer = nullptr)
+	std::weak_ptr<TimerObject> SetTimer(std::chrono::duration<Rep, Period>  duration, Function&& function, std::shared_ptr<TimerObject> timer = nullptr)
 	{
 		if (timer == nullptr)
 		{
-			timer = std::make_shared<boost::asio::steady_timer>(my_strand.context(), duration);
+			timer = std::make_shared<TimerObject>(ios_, duration);
+			timer->stop_ = false;
+		}
+		else
+		{
+			timer->expires_from_now(duration);
+		}
+
+		timer->async_wait([this, duration, function = std::forward<Function>(function), timer](const boost::system::error_code& ec)
+			{
+
+				if (ec)return;
+
+				if (!timer->IsStopped() && function())
+				{
+					SetTimer(duration, std::move(function), timer);
+				}
+			});
+
+
+		return  timer;
+	}
+
+
+	template<class Rep, class Period, typename Function>
+	std::weak_ptr<TimerObject> SetTimer(boost::asio::io_service::strand& my_strand, std::chrono::duration<Rep, Period>  duration, Function&& function, std::shared_ptr<TimerObject> timer = nullptr)
+	{
+		if (timer == nullptr)
+		{
+			timer = std::make_shared<TimerObject>(my_strand.context(), duration);
+			timer->stop_ = false;
 		}
 		else
 		{
@@ -559,7 +593,7 @@ protected:
 
 				if (ec)return;
 
-				if (function())
+				if (!timer->IsStopped() && function())
 				{
 					SetTimer(my_strand, duration, std::move(function), timer);
 				}

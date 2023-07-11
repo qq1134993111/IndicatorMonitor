@@ -220,7 +220,7 @@ public:
 	{
 		//std::string  class_name_;
 		ObjecctNodeMap  object_map_;
-		std::weak_ptr<boost::asio::steady_timer> timer_;
+		std::weak_ptr<GeneralProcessor::TimerObject> timer_;
 	};
 	using ClassNodeMap = std::map<std::string, ClassNode>;
 
@@ -271,7 +271,7 @@ public:
 		auto sp_timer = class_node_map_[class_name].timer_.lock();
 		if (sp_timer)
 		{
-			processor_.CancelTimer(nullptr, sp_timer);
+			processor_.CancelTimer(sp_timer);
 		}
 
 		class_node_map_[class_name].timer_ = processor_.AddTimer(std::chrono::milliseconds(ops.collection_interval_mill),
@@ -298,7 +298,7 @@ public:
 				class_node_map_.erase(it);
 				lc.unlock();
 
-				processor_.CancelTimer(nullptr, timer);
+				processor_.CancelTimer(timer);
 			}
 			return true;
 		}
